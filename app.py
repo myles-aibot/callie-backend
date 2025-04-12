@@ -1,11 +1,14 @@
 import os
 import openai
+import smtplib
 from flask import Flask, request, Response
+from datetime import datetime
+from email.mime.text import MIMEText
 from twilio.twiml.voice_response import VoiceResponse, Say, Record
 
 app = Flask(__name__)
 
-# Set your OpenAI API Key from environment variable
+# 🔐 OpenAI API key from environment
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 @app.route("/voice", methods=["POST"])
@@ -22,38 +25,45 @@ def voice():
     )
     return Response(str(response), mimetype="text/xml")
 
-@app.route("/transcription", methods=["POST"])
-def transcription():
-    """Handles the transcription once it's ready (Twilio sends it via webhook)"""
-    transcript = request.form.get("TranscriptionText", "")
-    recording_url = request.form.get("RecordingUrl", "")
-    print("📞 Transcription received:")
-    print("Text:", transcript)
-    print("Recording:", recording_url)
-    return Response("OK")
-
 @app.route("/process_recording", methods=["POST"])
 def process_recording():
-    """Once recording is done, respond with a GPT-generated message"""
-    transcript = request.form.get("TranscriptionText", "")
-    if not transcript:
-        return "<Response><Say>Sorry, I didn't catch that.</Say></Response>"
-
-    # Send transcript to GPT-4o
-    gpt_response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a friendly AI receptionist named Callie who takes phone messages for small businesses."},
-            {"role": "user", "content": f"Caller said: {transcript}"}
-        ]
-    )
-
-    reply = gpt_response.choices[0].message.content.strip()
-
-    # Say the response back to the caller
+    """TEMP FIX: Acknowledge the caller after recording ends"""
     response = VoiceResponse()
-    response.say(reply, voice='Polly.Joanna')
+    response.say("Thanks, I’ve saved your message. Someone will get back to you shortly.", voice='Polly.Joanna')
+    response.hangup()
     return Response(str(response), mimetype="text/xml")
+
+@app.route("/transcription", methods=["POST"])
+def transcription():
+    """Handle the finished transcript and email it"""
+    transcript = request.form.get("TranscriptionText", "")
+    recording_url = request.form.get("RecordingUrl", "")
+    from_number = request.form.get("From", "")
+
+    # Format email
+    msg_text = f"""
+📞 New Call Transcription — {datetime.now().strftime('%Y-%m-%d %I:%M %p')}
+
+From: {from_number}
+
+Transcript:
+{transcript}
+
+Recording:
+{recording_url}
+    """
+
+    msg = MIMEText(msg_text)
+    msg['Subject'] = "📞 New Call Received by Callie"
+    msg['From'] = "callie@usecallie.com"
+    msg['To'] = os.environ.get("NOTIFY_EMAIL")
+
+    # Send email
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(os.environ.get("EMAIL_USER"), os.environ.get("EMAIL_PASS"))
+        smtp.send_message(msg)
+
+    return Response("OK")
 
 @app.route("/")
 def home():
