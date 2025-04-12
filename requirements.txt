@@ -2,3 +2,6 @@ flask
 twilio
 gunicorn
 openai
+websockets
+starlette
+uvicorn
